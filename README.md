@@ -1,0 +1,1 @@
+sudo apt-get install sane sane-utils libsane-dev python3-sane python3-flask python3-flask-cors
