@@ -24,7 +24,7 @@ def scan_document():
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
     # Command to scan with 300 DPI resolution
-    command = f"scanimage --format=jpeg --resolution 300 > {filepath}"
+    command = f"scanimage --format=jpeg --mode Color --resolution 300 > {filepath}"
 
     try:
         subprocess.run(command, shell=True, check=True)
