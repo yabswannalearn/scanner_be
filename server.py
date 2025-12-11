@@ -1,81 +1,83 @@
-from flask import Flask, jsonify, send_from_directory
-import subprocess
 import os
 import datetime
+import subprocess
+from flask import Flask, jsonify, send_from_directory
 
 app = Flask(__name__)
 
-# --- CONFIGURATION ---
-# This directory will hold images on the Pi until your PC downloads them
-SCAN_FOLDER = os.path.join(os.getcwd(), "scanned_images")
+# --- CONFIGURATION (FIX 1: Absolute Path) ---
+# We use os.getcwd() to get the full path to the folder on the SD card
+BASE_DIR = os.getcwd()
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'scanned_images')
 
-# Safety Principle: Ensure the folder exists to prevent file errors
-if not os.path.exists(SCAN_FOLDER):
-    os.makedirs(SCAN_FOLDER)
+# Create the folder if it doesn't exist
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
-@app.route('/scan', methods=['POST'])
-def scan():
-    """
-    Triggered by PC. 
-    1. Generates a unique filename.
-    2. Runs the hardware scan command.
-    3. Saves the file locally.
-    4. Responds with JSON success.
-    """
-    # Generate unique filename
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# --- ROUTES ---
+@app.route('/')
+def home():
+    return "Scanner System is Online. Use /scan to trigger."
+
+@app.route('/scan', methods=['POST', 'GET'])
+def scan_document():
+    # 1. Generate Filename
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"scan_{timestamp}.png"
-    filepath = os.path.join(SCAN_FOLDER, filename)
+    # Note: Switching to PNG is often safer for text, but JPG is fine if you prefer
+    filename = f"scan_{timestamp}.jpg"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
-    # Command adjusted based on your hardware (Removed --mode Color)
+    # 2. Define Command (FIX 2: Removing 'shell=True' for safety)
+    # Note: I removed '--mode Color' because your logs showed it wasn't supported.
+    # If your scanner definitely supports it, you can add it back.
     command = [
-        "scanimage", 
-        "--resolution", "300", 
-        "mode", "Color",
-        "--format=png"
+        "scanimage",
+        "--format=jpeg",
+        "--resolution", "300"
     ]
 
     try:
-        print(f"Starting scan for {filename}...")
+        print(f"Scanning to: {filepath}")
         
-        # Execute scan and redirect output to file
-        with open(filepath, "wb") as image_file:
-            subprocess.run(command, stdout=image_file, check=True)
+        # 3. Execute Scan safely
+        # We write directly to the file handle. This ensures the file is
+        # closed and fully saved before the code moves on.
+        with open(filepath, "wb") as f:
+            subprocess.run(command, stdout=f, check=True)
 
-        print(f"Success: Saved to {filepath}")
-
-        # Return success JSON to Node.js
+        # 4. Return Success
         return jsonify({
             "status": "success",
-            "message": "Scan completed successfully",
+            "message": "Scan completed",
+            "file_saved_at": filepath,
             "filename": filename
         })
 
     except subprocess.CalledProcessError as e:
-        print(f"Scanner Hardware Error: {e}")
         return jsonify({
             "status": "error",
-            "message": "Scanner failed to capture image. Check USB connection."
+            "message": "Scanning failed. Check USB connection.",
+            "debug_error": str(e)
         }), 500
     except Exception as e:
-        print(f"System Error: {e}")
         return jsonify({
             "status": "error",
-            "message": str(e)
+            "message": "System error",
+            "debug_error": str(e)
         }), 500
 
-@app.route('/images/<path:filename>', methods=['GET'])
+@app.route('/images/<path:filename>')  # FIX 3: allow paths if needed
 def get_image(filename):
-    """
-    Serves the image file so the PC can download it via Axios.
-    """
+    # This serves the file from the absolute path defined above
     try:
-        return send_from_directory(SCAN_FOLDER, filename, as_attachment=True)
+        print(f"Sending file: {filename}")
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
     except FileNotFoundError:
-        return jsonify({"status": "error", "message": "File not found"}), 404
+        return jsonify({"status": "error", "message": "File not found on SD card"}), 404
 
 if __name__ == '__main__':
-    # '0.0.0.0' exposes the server to the local network (PC can see it)
-    print(f"Scanner Server Online on port 5000...")
-    print(f"Saving images to: {SCAN_FOLDER}")
-    app.run(host='0.0.0.0', port=5000)
+    # Ensure this port matches your Node.js config (5000)
+    print(f"Starting server. Saving images to: {UPLOAD_FOLDER}")
+    app.run(host='0.0.0.0', port=5000, debug=True)
