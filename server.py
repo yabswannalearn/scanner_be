@@ -1,8 +1,8 @@
 import os
 import datetime
 import subprocess
-from flask import Flask, jsonify, send_from_directory
-from flask_cors import CORS  # <--- IMPORT THIS
+from flask import Flask, jsonify, send_from_directory, request
+from flask_cors import CORS 
 
 app = Flask(__name__)
 
@@ -15,19 +15,30 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# --- EXPLICITLY ALLOW EVERYONE ---
-# r"/*" means: Apply to ALL routes
-# "origins": "*" means: Allow ALL IP addresses (Laptop, Phone, etc.)
+# --- CORS: ALLOW EVERYONE ---
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.route('/')
 def home():
-    return "Scanner Online. CORS Enabled for Everyone."
+    return "Scanner Online. Storage Cleanup Enabled."
 
 # --- ROUTE 1: TRIGGER THE SCAN ---
-# Note: We use GET because we are just "asking" it to start.
-@app.route('/scan', methods=['GET'])
+@app.route('/scan', methods=['POST', 'GET'])
 def scan_document():
+    # ---------------------------------------------------------
+    # FEATURE UPDATE: STORAGE CLEANUP
+    # Delete all previous files before starting a new scan
+    # ---------------------------------------------------------
+    try:
+        print("--- CLEANING UP OLD IMAGES ---")
+        for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            if os.path.isfile(file_path):
+                os.unlink(file_path) # Deletes the file
+    except Exception as e:
+        print(f"Cleanup Error: {e}") 
+    # ---------------------------------------------------------
+
     # 1. Create unique filename
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"scan_{timestamp}.png"
@@ -36,7 +47,6 @@ def scan_document():
     print(f"--- STARTING SCAN: {filename} ---")
     
     # 2. Run the hardware command
-    # Adjust resolution/mode if your specific scanner needs it
     command = ["scanimage", "--format=png", "--mode", "Color", "--resolution", "300"]
     
     try:
@@ -46,11 +56,17 @@ def scan_document():
         
         print(f"--- SAVED: {filepath} ---")
 
-        # 3. Return the filename to the frontend
+        # 3. Construct the Full URL (Critical for your React App)
+        # We use request.host_url to automatically detect the RPi's IP
+        host_url = request.host_url.rstrip('/')
+        file_url = f"{host_url}/images/{filename}"
+
+        # 4. Return filename AND URL
         return jsonify({
             "status": "success",
             "message": "Scan completed",
-            "filename": filename
+            "filename": filename,
+            "url": file_url  # React needs this to fetch the image
         })
 
     except Exception as e:
@@ -63,10 +79,9 @@ def scan_document():
 # --- ROUTE 2: DOWNLOAD THE IMAGE ---
 @app.route('/images/<path:filename>', methods=['GET'])
 def get_image(filename):
-    # This allows the React app to download the file
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 if __name__ == '__main__':
     # 0.0.0.0 is crucial. It means "Listen to the outside world"
-    print("Server starting... Connect from your laptop!")
+    print(f"Server starting on port 5000...")
     app.run(host='0.0.0.0', port=5000, debug=True)
